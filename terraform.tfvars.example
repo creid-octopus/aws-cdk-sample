@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars. nonprod_ecs_cluster_name / production_ecs_cluster_name
+# MUST match the same-named values in ../terraform.tfvars (the base stack) —
+# see the comment in variables.tf for why.
+
+nonprod_ecs_cluster_name    = "nonprod-demo"
+production_ecs_cluster_name = "production-demo"
+
+aws_region = "us-east-1"
