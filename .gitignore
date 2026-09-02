@@ -2,3 +2,7 @@
 **.tfvars
 *.tfstate
 *.tfstate.backup
+
+# misc
+demo-script.md
+octopus-implementation.md

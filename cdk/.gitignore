@@ -1,0 +1,12 @@
+# CDK
+cdk.out/
+cdk.context.json
+cdk-staging-directory/
+
+# Node
+node_modules/
+
+# misc
+.DS_Store
+*.swp
+*.swo

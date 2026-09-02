@@ -1,0 +1,30 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/ecs-rig-cdk.ts",
+  "watch": {
+    "include": ["**"],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "**/*.d.ts",
+      "**/*.js",
+      "tsconfig.json",
+      "package*.json",
+      "yarn.lock",
+      "node_modules",
+      "test"
+    ]
+  },
+  "context": {
+    "nonprodClusterName": "nonprod-demo",
+    "productionClusterName": "production-demo",
+    "logRetentionDays": 3,
+    "taskCpu": "256",
+    "taskMemory": "512",
+    "desiredCount": 1,
+    "containerImage": "public.ecr.aws/nginx/nginx:1.27-alpine",
+    "containerPort": 80,
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/core:target-partitions": ["aws", "aws-cn"]
+  }
+}
