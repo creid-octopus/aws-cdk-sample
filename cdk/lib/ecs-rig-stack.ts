@@ -82,6 +82,33 @@ function createExecutionRole(
   return role;
 }
 
+/**
+ * Create the ECS task role (trust ECS tasks, no managed policy — matches
+ * CDK's own default task role, just under our naming contract instead of
+ * an auto-generated stack-hash name).
+ *
+ * Without this, FargateTaskDefinition creates its own default task role
+ * named from the construct ID + a stack-specific hash (e.g.
+ * "NonprodStack-nonprod-demo-TaskDefTestTaskRole2EAA2D-dgVpujJYDWSo") —
+ * a naming scheme the base stack's IAM policy (cdk-bootstrap.tf,
+ * ExecutionRoleLifecycle) has no way to predict or scope to, since it only
+ * grants iam:CreateRole/DeleteRole/etc. on "${clusterName}-*". Real failure
+ * that caught this (ServerTasks-16214): "not authorized to perform:
+ * iam:CreateRole on resource: .../NonprodStack-nonprod-demo-TaskDefTestTaskRole...".
+ * Naming this role ourselves keeps it inside the existing contract instead
+ * of requiring a second, less predictable IAM scoping pattern.
+ */
+function createTaskRole(
+  scope: Construct,
+  id: string,
+  roleName: string,
+): iam.Role {
+  return new iam.Role(scope, id, {
+    roleName,
+    assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+  });
+}
+
 /** Create a CloudWatch log group for a task. */
 function createLogGroup(
   scope: Construct,
@@ -176,12 +203,22 @@ class EcsRigStack extends Stack {
         logRetentionDays,
       );
 
+      // Task role: {cluster}-{env}-task-role, or {cluster}-task-role when
+      // unnamed — one per service, so nonprod's two services (which share
+      // clusterName) don't collide on the role name.
+      const taskRole = createTaskRole(
+        this,
+        `TaskRole${idSuffix}`,
+        `${clusterName}${suffix}-task-role`,
+      );
+
       // Task definition: {cluster}-{env}, or {cluster} when unnamed
       const taskDef = new ecs.FargateTaskDefinition(this, `TaskDef${idSuffix}`, {
         family: `${clusterName}${suffix}`,
         cpu: parseInt(taskCpu, 10),
         memoryLimitMiB: parseInt(taskMemory, 10),
         executionRole,
+        taskRole,
       });
 
       taskDef.addContainer("app", {
