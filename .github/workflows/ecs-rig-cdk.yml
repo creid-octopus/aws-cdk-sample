@@ -1,0 +1,41 @@
+name: ECS CDK Build
+
+on:
+  push:
+    paths:
+      - 'cdk/**'
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set version
+        run: echo "PACKAGE_VERSION=$(date +'%Y%m%d').${{ github.run_number }}" >> $GITHUB_ENV
+
+      - name: Compress CDK directory
+        run: zip -r ecs-cdk.${{ env.PACKAGE_VERSION }}.zip cdk
+      
+      - name: Push package to Octopus
+        uses: OctopusDeploy/push-package-action@v3
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_URL: ${{ secrets.OCTOPUS_URL }}
+          OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
+        with:
+          packages: ecs-cdk.${{ env.PACKAGE_VERSION }}.zip
+          overwrite_mode: OverwriteExisting
+
+      - name: Create Octopus release
+        uses: OctopusDeploy/create-release-action@v3
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_URL: ${{ secrets.OCTOPUS_URL }}
+          OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
+        with:
+          project: ECS-Rig-CDK
+          packages: ecs-cdk.${{ env.PACKAGE_VERSION }}
