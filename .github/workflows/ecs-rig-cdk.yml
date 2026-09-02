@@ -50,6 +50,7 @@ jobs:
         with:
           packages: ${{ env.PACKAGE_ID }}
           version: ${{ env.PACKAGE_VERSION }}
+          overwrite_mode: OverwriteExisting
 
       - name: Create Octopus release
         uses: OctopusDeploy/create-release-action@v4
