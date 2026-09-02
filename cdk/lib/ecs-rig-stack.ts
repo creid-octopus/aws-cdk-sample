@@ -16,6 +16,19 @@ export interface EcsRigStackProps extends StackProps {
   containerPort?: number;
 }
 
+// Internal-only — the bit that actually differs between nonprod and
+// production, added by the two thin subclasses below rather than exposed to
+// bin/ecs-rig-cdk.ts (its call sites don't change at all).
+interface EcsRigStackInternalProps extends EcsRigStackProps {
+  // One service per entry. A named entry ("development", "test") gets that
+  // name suffixed onto every resource for it (nonprod's two services). A
+  // single `undefined` entry means one unnamed service, no suffix anywhere
+  // (production's one service) — this is what makes the same loop below
+  // produce both shapes without an if/else fork.
+  serviceNames: (string | undefined)[];
+  outputPrefix: "Nonprod" | "Production";
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -86,12 +99,31 @@ function createLogGroup(
   });
 }
 
+/** "development" -> "Development" — for construct IDs, which can't contain hyphens. */
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 // ---------------------------------------------------------------------------
-// Nonprod stack — 1 cluster, 2 services (development + test)
+// One cluster, one execution role, one security group, and one Fargate
+// service per entry in serviceNames — this is what both NonprodStack (two
+// services: development, test) and ProductionStack (one unnamed service)
+// actually are underneath. They were two ~100-line classes that only ever
+// differed in the services loop and the output names; this is that shared
+// body, kept package-private (not exported) since bin/ecs-rig-cdk.ts only
+// ever needs the two named subclasses below, not this one directly.
+//
+// Naming is unchanged from before this merge — every resource name, log
+// group path, and construct ID here matches what NonprodStack/ProductionStack
+// each produced on their own. That matters: the base stack's Terraform IAM
+// policies (main.tf, cdk-bootstrap.tf) reference these names directly
+// (ecs:cluster ARNs, iam:PassRole patterns, log group ARNs), so preserving
+// them exactly means this refactor doesn't create a second naming contract
+// to keep in sync.
 // ---------------------------------------------------------------------------
-export class NonprodStack extends Stack {
-  constructor(scope: Construct, id: string, props: EcsRigStackProps) {
-    super(scope, id, { ...props, stackName: `NonprodStack-${props.clusterName}` });
+class EcsRigStack extends Stack {
+  constructor(scope: Construct, id: string, props: EcsRigStackInternalProps) {
+    super(scope, id, { ...props, stackName: `${id}-${props.clusterName}` });
 
     const {
       clusterName,
@@ -101,6 +133,8 @@ export class NonprodStack extends Stack {
       desiredCount,
       containerImage,
       containerPort = 80,
+      serviceNames,
+      outputPrefix,
     } = props;
 
     const { vpc, subnets } = getNetworkResources(this);
@@ -109,8 +143,7 @@ export class NonprodStack extends Stack {
     const taskSg = new ec2.SecurityGroup(this, "TaskSecurityGroup", {
       vpc,
       securityGroupName: `${clusterName}-tasks`,
-      description:
-        "ECS rig: nonprod ECS tasks. Egress-only, no inbound needed without a load balancer.",
+      description: `ECS rig: ${outputPrefix.toLowerCase()} ECS tasks. Egress-only, no inbound needed without a load balancer.`,
     });
     taskSg.addEgressRule(
       ec2.Peer.anyIpv4(),
@@ -127,22 +160,25 @@ export class NonprodStack extends Stack {
       vpc,
     });
 
-    // -- Services (one per nonprod environment) ------------------------------
-    const environments = ["development", "test"] as const;
+    // -- Services (one per entry in serviceNames) ----------------------------
+    const resolvedServiceNames: string[] = [];
 
-    for (const env of environments) {
-      // Log group: /ecs/{cluster}-{env}
+    for (const env of serviceNames) {
+      const suffix = env ? `-${env}` : "";
+      const idSuffix = env ? capitalize(env) : "";
+
+      // Log group: /ecs/{cluster}-{env}, or /ecs/{cluster} when unnamed
       const logGroup = createLogGroup(
         this,
-        `LogGroup${env.charAt(0).toUpperCase()}${env.slice(1)}`,
+        `LogGroup${idSuffix}`,
         clusterName,
         env,
         logRetentionDays,
       );
 
-      // Task definition: {cluster}-{env}
-      const taskDef = new ecs.FargateTaskDefinition(this, `TaskDef${env.charAt(0).toUpperCase()}${env.slice(1)}`, {
-        family: `${clusterName}-${env}`,
+      // Task definition: {cluster}-{env}, or {cluster} when unnamed
+      const taskDef = new ecs.FargateTaskDefinition(this, `TaskDef${idSuffix}`, {
+        family: `${clusterName}${suffix}`,
         cpu: parseInt(taskCpu, 10),
         memoryLimitMiB: parseInt(taskMemory, 10),
         executionRole,
@@ -161,31 +197,43 @@ export class NonprodStack extends Stack {
         }),
       });
 
-      // Service: {cluster}-service-{env}
-      new ecs.FargateService(this, `Service${env.charAt(0).toUpperCase()}${env.slice(1)}`, {
+      // Service: {cluster}-service-{env}, or {cluster}-service when unnamed
+      const serviceName = `${clusterName}-service${suffix}`;
+      new ecs.FargateService(this, `Service${idSuffix}`, {
         cluster,
         taskDefinition: taskDef,
-        serviceName: `${clusterName}-service-${env}`,
+        serviceName,
         desiredCount,
         securityGroups: [taskSg],
         vpcSubnets: { subnets },
         assignPublicIp: true,
       });
+
+      resolvedServiceNames.push(serviceName);
     }
 
     // -- Outputs -------------------------------------------------------------
-    new cdk.CfnOutput(this, "NonprodClusterArn", {
+    new cdk.CfnOutput(this, `${outputPrefix}ClusterArn`, {
       value: cluster.clusterArn,
-      description:
-        "ARN of the nonprod ECS cluster, for cross-checking against the ecs:cluster condition in the base stack's IAM policy.",
+      description: `ARN of the ${outputPrefix.toLowerCase()} ECS cluster, for cross-checking against the ecs:cluster condition in the base stack's IAM policy.`,
     });
 
-    new cdk.CfnOutput(this, "NonprodServices", {
-      value: environments
-        .map((e) => `${clusterName}-service-${e}`)
-        .join(", "),
-      description: "Nonprod service names to watch in Octopus / AWS console.",
-    });
+    // Nonprod (multiple services) gets a joined "Services" output, same as
+    // before the merge; production (exactly one) keeps its singular
+    // "ServiceName" output rather than a one-element list — output key names
+    // are unchanged either way, so nothing downstream that reads these has
+    // to change.
+    if (resolvedServiceNames.length > 1) {
+      new cdk.CfnOutput(this, `${outputPrefix}Services`, {
+        value: resolvedServiceNames.join(", "),
+        description: `${outputPrefix} service names to watch in Octopus / AWS console.`,
+      });
+    } else {
+      new cdk.CfnOutput(this, `${outputPrefix}ServiceName`, {
+        value: resolvedServiceNames[0],
+        description: `${outputPrefix} service name to watch in Octopus / AWS console.`,
+      });
+    }
 
     new cdk.CfnOutput(this, "SubnetIds", {
       value: subnets.map((s) => s.subnetId).join(", "),
@@ -194,7 +242,20 @@ export class NonprodStack extends Stack {
 
     new cdk.CfnOutput(this, "SecurityGroupId", {
       value: taskSg.securityGroupId,
-      description: "Security group ID for nonprod tasks.",
+      description: `Security group ID for ${outputPrefix.toLowerCase()} tasks.`,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Nonprod stack — 1 cluster, 2 services (development + test)
+// ---------------------------------------------------------------------------
+export class NonprodStack extends EcsRigStack {
+  constructor(scope: Construct, id: string, props: EcsRigStackProps) {
+    super(scope, id, {
+      ...props,
+      serviceNames: ["development", "test"],
+      outputPrefix: "Nonprod",
     });
   }
 }
@@ -202,105 +263,12 @@ export class NonprodStack extends Stack {
 // ---------------------------------------------------------------------------
 // Production stack — 1 cluster, 1 service
 // ---------------------------------------------------------------------------
-export class ProductionStack extends Stack {
+export class ProductionStack extends EcsRigStack {
   constructor(scope: Construct, id: string, props: EcsRigStackProps) {
-    super(scope, id, { ...props, stackName: `ProductionStack-${props.clusterName}` });
-
-    const {
-      clusterName,
-      logRetentionDays,
-      taskCpu,
-      taskMemory,
-      desiredCount,
-      containerImage,
-      containerPort = 80,
-    } = props;
-
-    const { vpc, subnets } = getNetworkResources(this);
-
-    // -- Security group (egress-only) ---------------------------------------
-    const taskSg = new ec2.SecurityGroup(this, "TaskSecurityGroup", {
-      vpc,
-      securityGroupName: `${clusterName}-tasks`,
-      description:
-        "ECS rig: production ECS tasks. Egress-only, no inbound needed without a load balancer.",
-    });
-    taskSg.addEgressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.allTraffic(),
-      "Allow all outbound",
-    );
-
-    // -- Execution role ------------------------------------------------------
-    const executionRole = createExecutionRole(this, "ExecutionRole", clusterName);
-
-    // -- Cluster -------------------------------------------------------------
-    const cluster = new ecs.Cluster(this, "Cluster", {
-      clusterName,
-      vpc,
-    });
-
-    // -- Log group: /ecs/{cluster} -------------------------------------------
-    const logGroup = createLogGroup(
-      this,
-      "LogGroup",
-      clusterName,
-      undefined,
-      logRetentionDays,
-    );
-
-    // -- Task definition: {cluster} ------------------------------------------
-    const taskDef = new ecs.FargateTaskDefinition(this, "TaskDef", {
-      family: clusterName,
-      cpu: parseInt(taskCpu, 10),
-      memoryLimitMiB: parseInt(taskMemory, 10),
-      executionRole,
-    });
-
-    taskDef.addContainer("app", {
-      image: containerImage
-        ? ecs.ContainerImage.fromRegistry(containerImage)
-        : ecs.ContainerImage.fromRegistry(
-            "public.ecr.aws/nginx/nginx:1.27-alpine",
-          ),
-      portMappings: [{ containerPort, protocol: ecs.Protocol.TCP }],
-      logging: new ecs.AwsLogDriver({
-        logGroup,
-        streamPrefix: "ecs",
-      }),
-    });
-
-    // -- Service: {cluster}-service ------------------------------------------
-    new ecs.FargateService(this, "Service", {
-      cluster,
-      taskDefinition: taskDef,
-      serviceName: `${clusterName}-service`,
-      desiredCount,
-      securityGroups: [taskSg],
-      vpcSubnets: { subnets },
-      assignPublicIp: true,
-    });
-
-    // -- Outputs -------------------------------------------------------------
-    new cdk.CfnOutput(this, "ProductionClusterArn", {
-      value: cluster.clusterArn,
-      description:
-        "ARN of the production ECS cluster, for cross-checking against the ecs:cluster condition in the base stack's IAM policy.",
-    });
-
-    new cdk.CfnOutput(this, "ProductionServiceName", {
-      value: `${clusterName}-service`,
-      description: "Production service name to watch in Octopus / AWS console.",
-    });
-
-    new cdk.CfnOutput(this, "SubnetIds", {
-      value: subnets.map((s) => s.subnetId).join(", "),
-      description: "Subnet IDs for manual run-task --network-configuration.",
-    });
-
-    new cdk.CfnOutput(this, "SecurityGroupId", {
-      value: taskSg.securityGroupId,
-      description: "Security group ID for production tasks.",
+    super(scope, id, {
+      ...props,
+      serviceNames: [undefined],
+      outputPrefix: "Production",
     });
   }
 }
