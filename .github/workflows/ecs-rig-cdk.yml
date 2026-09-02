@@ -58,4 +58,5 @@ jobs:
           OCTOPUS_SPACE: ${{ env.OCTOPUS_SPACE }}
         with:
           project: ${{ env.OCTOPUS_PROJECT_NAME }}
-          packages: ${{ env.PACKAGE_ID }}.${{ env.PACKAGE_VERSION }}
+          packages: |
+            ${{ env.PACKAGE_ID }}:${{ env.PACKAGE_VERSION }}
