@@ -13,7 +13,7 @@ permissions:
 
 env:
   OCTOPUS_SPACE: 'Default'
-  OCTOPUS_PROJECT_SLUG: 'aws-cdk-deployment' 
+  OCTOPUS_PROJECT_NAME: 'AWS CDK Deployment' 
   PACKAGE_ID: 'ecs-cdk'
 
 jobs:
@@ -56,5 +56,5 @@ jobs:
         env:
           OCTOPUS_SPACE: ${{ env.OCTOPUS_SPACE }}
         with:
-          project: ${{ env.OCTOPUS_PROJECT_SLUG }}
+          project: ${{ env.OCTOPUS_PROJECT_NAME }}
           packages: ${{ env.PACKAGE_ID }}.${{ env.PACKAGE_VERSION }}
