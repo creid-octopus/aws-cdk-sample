@@ -3,13 +3,18 @@ name: ECS CDK Build
 on:
   push:
     paths:
-      - 'cdk/**'
+      - '/cdk/**'
     branches: [main]
   workflow_dispatch:
 
 permissions:
   id-token: write # Required for requesting the JWT
   contents: read  # Required for actions/checkout
+
+env:
+  OCTOPUS_SPACE: 'Default'
+  OCTOPUS_PROJECT_SLUG: 'aws-cdk-deployment' 
+  PACKAGE_ID: 'ecs-cdk'
 
 jobs:
   build-and-deploy:
@@ -22,7 +27,7 @@ jobs:
         run: echo "PACKAGE_VERSION=$(date +'%Y%m%d').${{ github.run_number }}" >> $GITHUB_ENV
 
       - name: Compress CDK directory
-        run: zip -r ecs-cdk.${{ env.PACKAGE_VERSION }}.zip cdk
+        run: zip -r ${{ env.PACKAGE_ID }}.${{ env.PACKAGE_VERSION }}.zip cdk
 
       - name: Login to Octopus Deploy 
         uses: OctopusDeploy/login@v1
@@ -31,13 +36,25 @@ jobs:
           service_account_id: d7b6439c-edd8-4f5c-b035-ad3a647807b4
       
       - name: Push package to Octopus
-        uses: OctopusDeploy/push-package-action@v3
+        uses: OctopusDeploy/push-package-action@v4
+        env:
+          OCTOPUS_SPACE: ${{ env.OCTOPUS_SPACE }}
         with:
-          packages: ecs-cdk.${{ env.PACKAGE_VERSION }}.zip
+          packages: ${{ env.PACKAGE_ID }}.${{ env.PACKAGE_VERSION }}.zip
           overwrite_mode: OverwriteExisting
 
-      - name: Create Octopus release
-        uses: OctopusDeploy/create-release-action@v3
+      - name: Push build information to Octopus
+        uses: OctopusDeploy/push-build-information-action@v4
+        env:
+          OCTOPUS_SPACE: ${{ env.OCTOPUS_SPACE }}
         with:
-          project: ECS-Rig-CDK
-          packages: ecs-cdk.${{ env.PACKAGE_VERSION }}
+          packages: ${{ env.PACKAGE_ID }}
+          version: ${{ env.PACKAGE_VERSION }}
+
+      - name: Create Octopus release
+        uses: OctopusDeploy/create-release-action@v4
+        env:
+          OCTOPUS_SPACE: ${{ env.OCTOPUS_SPACE }}
+        with:
+          project: ${{ env.OCTOPUS_PROJECT_SLUG }}
+          packages: ${{ env.PACKAGE_ID }}.${{ env.PACKAGE_VERSION }}
