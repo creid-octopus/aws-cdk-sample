@@ -28,7 +28,7 @@ process {
                 Octopus.Action.Script.ScriptBody = <<-EOT
                     set -euo pipefail
                     
-                    PACKAGE_DIR="#{Octopus.Action.Package[ecs-cdk].ExtractedPath}/cdk"
+                    PACKAGE_DIR="#{Project.CDK.Directory}"
                     
                     cd "$PACKAGE_DIR"
                     npm ci --omit=dev
