@@ -45,8 +45,7 @@ step "aws-cli-run-cdk-deployment" {
                 # Determine which stack to deploy based on environment name
                 STACK=#{Project.CDK.StackName}
                 STACKNAME="${STACK}-#{Project.CDK.ClusterName}"
-                PACKAGE_DIR="#{Octopus.Action.Package[ecs-cdk].ExtractedPath}/cdk"
-                # PACKAGE_DIR="#{Octopus.Action[AWS CLI - Run CDK Deployment].Output.Octopus.Action.Package[ecs-cdk].ExtractedPath}/cdk"
+                PACKAGE_DIR="#{Project.CDK.Directory}"
                 
                 cd "$PACKAGE_DIR"
                 npm ci --production
