@@ -1,0 +1,104 @@
+step "cdk-bootstrap" {
+    name = "CDK Bootstrap"
+
+    action {
+        action_type = "Octopus.AwsRunScript"
+        properties = {
+            Octopus.Action.Aws.AssumeRole = "False"
+            Octopus.Action.Aws.Region = "#{Project.AWS.Region}"
+            Octopus.Action.AwsAccount.UseInstanceRole = "False"
+            Octopus.Action.AwsAccount.Variable = "Project.AWS.CDKBootstrapAccount"
+            Octopus.Action.Script.ScriptBody = <<-EOT
+                echo "Bootstrapping CDK toolkit for #{Octopus.Environment.Name}..."
+                
+                
+                cdk bootstrap aws://#{Project.AWS.AccountId}/#{Project.AWS.Region} \
+                  --qualifier #{Project.CDK.BootstrapQualifier} \
+                  --toolkit-stack-name CDKToolkit-#{Project.CDK.BootstrapQualifier} \
+                  --cloudformation-execution-policies #{Project.CDK.ExecutionPolicyArn} 2>&1
+                EOT
+            Octopus.Action.Script.ScriptSource = "Inline"
+            Octopus.Action.Script.Syntax = "Bash"
+        }
+        worker_pool = "hosted-ubuntu"
+
+        container {
+            feed = "dockerhub-octopuscory"
+            image = "#{Project.Docker.WorkerImage}"
+        }
+    }
+}
+
+step "aws-cli-run-cdk-deployment" {
+    name = "AWS CLI - Run CDK Deployment"
+
+    action {
+        action_type = "Octopus.AwsRunScript"
+        properties = {
+            Octopus.Action.Aws.AssumeRole = "False"
+            Octopus.Action.Aws.Region = "#{Project.AWS.Region}"
+            Octopus.Action.AwsAccount.UseInstanceRole = "False"
+            Octopus.Action.AwsAccount.Variable = "Project.AWS.Account"
+            Octopus.Action.Script.ScriptBody = <<-EOT
+                set -euo pipefail
+                
+                # Determine which stack to deploy based on environment name
+                STACK=#{Project.CDK.StackName}
+                STACKNAME="${STACK}-#{Project.CDK.ClusterName}"
+                PACKAGE_DIR="#{Octopus.Action.Package[ecs-cdk].ExtractedPath}/cdk"
+                # PACKAGE_DIR="#{Octopus.Action[AWS CLI - Run CDK Deployment].Output.Octopus.Action.Package[ecs-cdk].ExtractedPath}/cdk"
+                
+                cd "$PACKAGE_DIR"
+                npm ci --production
+                
+                
+                echo "Deploying $STACK (stackName=$STACKNAME)..."
+                cdk deploy $STACK \
+                  --context #{Project.CDK.ContextMap} \
+                  --toolkit-stack-name CDKToolkit-#{Project.CDK.BootstrapQualifier} \
+                  --require-approval never \
+                  --exclusively 2>&1
+                
+                # Capture CloudFormation outputs as Octopus variables
+                outputs=$(aws cloudformation describe-stacks \
+                  --stack-name "$STACKNAME" \
+                  --query "Stacks[0].Outputs" \
+                  --output json)
+                
+                if [ -n "$outputs" ]; then
+                  echo "$outputs" | jq -c '.[]' | while read -r item; do
+                    Key=$(echo "$item" | jq -r '.OutputKey')
+                    Value=$(echo "$item" | jq -r '.OutputValue')
+                    set_octopusvariable "$Key" "$Value"
+                    echo "Output variable ##{Octopus.Action[AWS CLI - Run CDK Deployment].Output.${Key}} = ${Value}"
+                  done
+                fi
+                
+                EOT
+            Octopus.Action.Script.ScriptSource = "Inline"
+            Octopus.Action.Script.Syntax = "Bash"
+        }
+        worker_pool = "hosted-ubuntu"
+
+        container {
+            feed = "dockerhub-octopuscory"
+            image = "#{Project.Docker.WorkerImage}"
+        }
+
+        packages "ecs-cdk" {
+            acquisition_location = "Server"
+            feed = "octopus-server-built-in"
+            package_id = "ecs-cdk"
+            properties = {
+                Extract = "True"
+                SelectionMode = "immediate"
+            }
+        }
+    }
+}
+
+process_template "run-a-process-template" {
+    name = "Run a Process Template"
+    process_template_slug = "notifications-postdeploy"
+    version_mask = "PreRelease"
+}

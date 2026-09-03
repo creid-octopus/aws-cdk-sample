@@ -1,0 +1,68 @@
+name = "Delete CDK Bootstrap Resources"
+cancel_queued_tasks = true
+cancel_running_tasks = true
+default_guided_failure_mode = "EnvironmentDefault"
+description = "Removes lingering toolkit stacks (including S3 buckets, ECR, etc.)"
+environment_scope = "Specified"
+environments = ["development", "production"]
+
+connectivity_policy {
+    allow_deployments_to_no_targets = true
+}
+
+run_retention_policy {
+    type = "Default"
+}
+
+process {
+    step "remove-cdk-toolkit-base" {
+        name = "Remove CDK Toolkit Base"
+
+        action {
+            action_type = "Octopus.AwsRunScript"
+            properties = {
+                Octopus.Action.Aws.AssumeRole = "False"
+                Octopus.Action.Aws.Region = "#{Project.AWS.Region}"
+                Octopus.Action.AwsAccount.UseInstanceRole = "False"
+                Octopus.Action.AwsAccount.Variable = "Project.AWS.CDKBootstrapAccount"
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                    set -euo pipefail
+                    
+                    QUALIFIER=#{Project.CDK.BootstrapQualifier}
+                    BUCKET="cdk-${QUALIFIER}-assets-#{Project.AWS.AccountId}-#{Project.AWS.Region}"
+                    REPO="cdk-${QUALIFIER}-container-assets-#{Project.AWS.AccountId}-#{Project.AWS.Region}"
+                    STACK="CDKToolkit-${QUALIFIER}"
+                    
+                    write_highlight "Emptying staging bucket $BUCKET (all versions + delete markers)..."
+                    aws s3api list-object-versions --bucket "$BUCKET" --output json \
+                      --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' > /tmp/versions.json
+                    if [ "$(jq '.Objects | length' /tmp/versions.json)" -gt 0 ]; then
+                      aws s3api delete-objects --bucket "$BUCKET" --delete file:///tmp/versions.json
+                    fi
+                    
+                    aws s3api list-object-versions --bucket "$BUCKET" --output json \
+                      --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' > /tmp/markers.json
+                    if [ "$(jq '.Objects | length' /tmp/markers.json)" -gt 0 ]; then
+                      aws s3api delete-objects --bucket "$BUCKET" --delete file:///tmp/markers.json
+                    fi
+                    
+                    write_highlight "Force-deleting ECR repo $REPO (if it exists)..."
+                    aws ecr delete-repository --repository-name "$REPO" --force 2>/dev/null || echo "Repo already gone or empty, continuing."
+                    
+                    write_highlight "Deleting toolkit stack $STACK..."
+                    aws cloudformation delete-stack --stack-name "$STACK"
+                    aws cloudformation wait stack-delete-complete --stack-name "$STACK"
+                    write_highlight "✅ $STACK deleted."
+                    EOT
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "Bash"
+            }
+            worker_pool = "hosted-ubuntu"
+
+            container {
+                feed = "dockerhub-octopuscory"
+                image = "#{Project.Docker.WorkerImage}"
+            }
+        }
+    }
+}

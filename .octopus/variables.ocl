@@ -1,0 +1,90 @@
+variable "Project.AWS.Account" {
+    type = "AmazonWebServicesAccount"
+
+    value "aws-oidc-solutions-nonprod" {
+        environment = ["development", "test"]
+    }
+
+    value "aws-oidc-solutions-production" {
+        environment = ["production"]
+    }
+}
+
+variable "Project.AWS.CDKBootstrapAccount" {
+    type = "AmazonWebServicesAccount"
+
+    value "aws-oidc-solutions-cdkbootstrap" {}
+}
+
+variable "Project.AWS.Region" {
+    value "us-east-2" {}
+}
+
+variable "Project.AWS.WorkerImage" {
+    value "library/octopus-demo-images:aws-cdk-tools" {}
+}
+
+variable "Project.CDK.BootstrapQualifier" {
+    value "cdkprod" {
+        description = ""
+        environment = ["production"]
+    }
+
+    value "cdknp" {
+        environment = ["development", "test"]
+    }
+}
+
+variable "Project.CDK.ClusterName" {
+    value "nonprod-demo" {
+        environment = ["development", "test"]
+    }
+
+    value "production-demo" {
+        description = ""
+        environment = ["production"]
+    }
+}
+
+variable "Project.CDK.ContainerImage" {
+    value "library/octopus-demo-images" {}
+}
+
+variable "Project.CDK.ContextMap" {
+    value "nonprodClusterName=#{Project.CDK.ClusterName}" {
+        environment = ["development", "test"]
+    }
+
+    value "productionClusterName=#{Project.CDK.ClusterName}" {
+        environment = ["production"]
+    }
+}
+
+variable "Project.CDK.Directory" {
+    value "ecs-rig/cdk" {}
+}
+
+variable "Project.CDK.ExecutionPolicyArn" {
+    value "arn:aws:iam::381713788115:policy/octopus-production-cdk-execution-permissions" {
+        description = ""
+        environment = ["production"]
+    }
+
+    value "arn:aws:iam::381713788115:policy/octopus-nonprod-cdk-execution-permissions" {
+        environment = ["development", "test"]
+    }
+}
+
+variable "Project.CDK.StackName" {
+    value "ProductionStack" {
+        environment = ["production"]
+    }
+
+    value "NonprodStack" {
+        environment = ["development", "test"]
+    }
+}
+
+variable "Project.Docker.WorkerImage" {
+    value "octopuscory/aws-workertools-cdk" {}
+}

@@ -1,0 +1,61 @@
+name = "CDK Destroy"
+cancel_queued_tasks = true
+cancel_running_tasks = true
+default_guided_failure_mode = "EnvironmentDefault"
+description = "Runs `cdk destroy --force` to destroy the stacks created by the deployments from this project. Uses same variables to pass stack names and same package reference to run commands from."
+environment_scope = "Specified"
+environments = ["development", "production"]
+
+connectivity_policy {
+    allow_deployments_to_no_targets = true
+}
+
+run_retention_policy {
+    type = "Default"
+}
+
+process {
+    step "cdk-destroy" {
+        name = "CDK Destroy"
+
+        action {
+            action_type = "Octopus.AwsRunScript"
+            properties = {
+                Octopus.Action.Aws.AssumeRole = "False"
+                Octopus.Action.Aws.Region = "#{Project.AWS.Region}"
+                Octopus.Action.AwsAccount.UseInstanceRole = "False"
+                Octopus.Action.AwsAccount.Variable = "Project.AWS.Account"
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                    set -euo pipefail
+                    
+                    PACKAGE_DIR="#{Octopus.Action.Package[ecs-cdk].ExtractedPath}/cdk"
+                    
+                    cd "$PACKAGE_DIR"
+                    npm ci --omit=dev
+                    
+                    cdk destroy #{Project.CDK.StackName} \
+                      --context #{Project.CDK.ContextMap} \
+                      --force 2>&1
+                    EOT
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "Bash"
+            }
+            worker_pool = "hosted-ubuntu"
+
+            container {
+                feed = "dockerhub-octopuscory"
+                image = "#{Project.Docker.WorkerImage}"
+            }
+
+            packages "ecs-cdk" {
+                acquisition_location = "Server"
+                feed = "octopus-server-built-in"
+                package_id = "ecs-cdk"
+                properties = {
+                    Extract = "True"
+                    SelectionMode = "immediate"
+                }
+            }
+        }
+    }
+}
