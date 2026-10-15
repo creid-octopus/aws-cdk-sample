@@ -99,5 +99,5 @@ step "aws-cli-run-cdk-deployment" {
 process_template "run-a-process-template" {
     name = "Run a Process Template"
     process_template_slug = "notifications-postdeploy"
-    version_mask = "PreRelease"
+    version_mask = "4.X"
 }
